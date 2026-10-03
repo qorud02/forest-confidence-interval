@@ -46,9 +46,13 @@ ax.set_xlabel('Prediction (spam probability)')
 ax.set_ylabel('Number of observations')
 plt.legend()
 
-# Calculate the variance
-spam_V_IJ_unbiased = fci.random_forest_error(spam_RFC, spam_X_train.shape,
-                                             spam_X_test)
+# Estimate sampling variance of the spam probability (class label 1).
+# class_index is a column position in spam_RFC.classes_, not the label itself.
+spam_class_index = np.flatnonzero(spam_RFC.classes_ == 1)[0]
+spam_V_IJ_unbiased = fci.random_forest_error(
+    spam_RFC, spam_X_train.shape, spam_X_test,
+    class_index=spam_class_index,
+)
 
 # Plot forest prediction for emails and standard deviation for estimates
 # Blue points are spam emails; Green points are non-spam emails

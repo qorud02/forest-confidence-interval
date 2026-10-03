@@ -11,6 +11,8 @@ import warnings
 import numpy as np
 
 import sklearn
+from sklearn.base import is_classifier
+from sklearn.utils.validation import check_is_fitted
 from sklearn.ensemble._forest import BaseForest
 from sklearn.ensemble._forest import (_generate_sample_indices,
                                       _get_n_samples_bootstrap)
@@ -233,7 +235,9 @@ def _bias_correction(V_IJ, inbag, pred_centered, n_trees):
     return V_IJ_unbiased
 
 
-def _centered_prediction_forest(forest, X_test, y_output=None):
+def _centered_prediction_forest(
+    forest, X_test, y_output=None, class_index=None
+):
     """
     Center the tree predictions by the mean prediction (forest)
 
@@ -264,7 +268,14 @@ def _centered_prediction_forest(forest, X_test, y_output=None):
     if len(X_test.shape) == 1:
         X_test = X_test.reshape(1, -1)
 
-    pred = np.array([tree.predict(X_test) for tree in forest])
+    if class_index is None:
+        pred = np.array([tree.predict(X_test) for tree in forest])
+    else:
+        # A view would retain every tree's full class-probability matrix.
+        pred = np.array([
+            tree.predict_proba(X_test)[:, class_index].copy()
+            for tree in forest
+        ])
     if 'n_outputs_' in dir(forest) and forest.n_outputs_ > 1:
         pred = pred[:,:,y_output]
 
@@ -283,6 +294,7 @@ def random_forest_error(
     memory_limit=None,
     y_output=None,
     show_progress=False,
+    class_index=None,
 ):
     """
     Calculate error bars from scikit-learn RandomForest estimators.
@@ -336,6 +348,16 @@ def random_forest_error(
         optional ``tqdm`` dependency. Calibration displays a second bar for its
         reduced forest computation. Default: False.
 
+    class_index : int, optional
+        A nonnegative column index in ``forest.classes_`` for a single-output
+        ``RandomForestClassifier`` or ``ExtraTreesClassifier``. Estimate the
+        sampling variance of its predicted probability using each tree's
+        ``predict_proba`` output, whose mean is the forest probability.
+        This is uncertainty in the estimated probability, not uncertainty in a
+        future class label. The default preserves the legacy calculation based
+        on numeric tree predictions. Unsupported for regressors, bagging and
+        multioutput classifiers; cannot be combined with ``y_output``.
+
     Returns
     -------
     An array with the unbiased sampling variance (V_IJ_unbiased)
@@ -356,6 +378,23 @@ def random_forest_error(
        of Machine Learning Research vol. 15, pp. 1625-1651, 2014.
     """
 
+    if class_index is not None:
+        if not isinstance(forest, BaseForest) or not is_classifier(forest):
+            raise ValueError(
+                "class_index requires a single-output forest classifier"
+            )
+        check_is_fitted(forest, ['estimators_', 'classes_', 'n_outputs_'])
+        if getattr(forest, "n_outputs_", 1) != 1:
+            raise ValueError(
+                "class_index does not support multioutput classifiers"
+            )
+        if (isinstance(class_index, (bool, np.bool_))
+                or not isinstance(class_index, (int, np.integer))
+                or not 0 <= class_index < len(forest.classes_)):
+            raise ValueError("class_index must index forest.classes_")
+        if y_output is not None:
+            raise ValueError("class_index cannot be combined with y_output")
+
     if 'n_outputs_' in dir(forest) and forest.n_outputs_ > 1 and y_output == None:
         e_s = "MultiOutput regressor: specify the index of the target to analyse (y_output)"
         raise ValueError(e_s)
@@ -363,7 +402,9 @@ def random_forest_error(
     if inbag is None:
         inbag = calc_inbag(X_train_shape[0], forest)
 
-    pred_centered = _centered_prediction_forest(forest, X_test, y_output)
+    pred_centered = _centered_prediction_forest(
+        forest, X_test, y_output, class_index
+    )
     n_trees = forest.n_estimators
     V_IJ = _core_computation(
         X_train_shape,
@@ -413,6 +454,7 @@ def random_forest_error(
             memory_limit=memory_limit,
             y_output=y_output,
             show_progress=show_progress,
+            class_index=class_index,
         )
         # Use this second set of variance estimates
         # to estimate scale of Monte Carlo noise
