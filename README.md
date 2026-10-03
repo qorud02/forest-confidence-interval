@@ -137,3 +137,39 @@ The BibTeX citation for the JOSS article is below:
   year={2017}
 }
 ```
+
+## Classifier probability uncertainty
+
+For a single-output `RandomForestClassifier` or `ExtraTreesClassifier`,
+select a class probability explicitly with `class_index`:
+
+```python
+class_index = 1  # Position in model.classes_, not the class label
+variance = fci.random_forest_error(
+    model, X_train.shape, X_test,
+    class_index=class_index, calibrate=False,
+)
+probability = model.predict_proba(X_test)[:, class_index]
+```
+
+The calculation uses each tree's probability for that class. Their mean is the
+forest's predicted probability. The result estimates sampling variability in
+this estimated probability as the training data vary. It is not the variance
+of a future class label, a class covariance matrix, or a guarantee of interval
+coverage. Finite-tree Monte Carlo bias can produce negative uncalibrated
+estimates; the existing calibration cautions above still apply.
+
+`class_index` is a nonnegative integer position in `model.classes_`. String
+and nonconsecutive numeric class labels are supported through this position.
+Regressors, bagging classifiers, multioutput classifiers, and combinations with
+`y_output` are unsupported for this option. The existing bootstrap/inbag
+requirements still apply; for example, an ExtraTrees classifier must use
+`bootstrap=True` to infer inbag counts.
+
+Omitting `class_index` preserves the legacy calculation using numeric tree
+predictions. For nominal multiclass classification those class indices are
+arbitrary, so that legacy variance should not be interpreted as uncertainty
+in a selected class probability.
+
+The existing `memory_limit` constrains the core covariance chunks, not the
+fitted forest or all prediction and probability arrays.
